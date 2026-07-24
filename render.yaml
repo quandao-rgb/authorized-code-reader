@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: authorized-code-reader-api
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci --ignore-scripts && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    maxShutdownDelaySeconds: 10
+    envVars:
+      - key: MAILBOXES_JSON
+        sync: false

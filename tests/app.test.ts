@@ -24,6 +24,15 @@ function testApp() {
 }
 
 describe("code request API", () => {
+  it("reports a cache-disabled health check", async () => {
+    const { app } = testApp();
+    const response = await request(app).get("/api/health");
+
+    expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.body).toEqual({ status: "ok" });
+  });
+
   it("returns the documented unknown-email response with no-store", async () => {
     const { app } = testApp();
     const response = await request(app)
