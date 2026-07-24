@@ -55,9 +55,13 @@ export function createApp(options: CreateAppOptions): express.Express {
         },
       });
 
-  app.use("/api/code-requests", (_request, response, next) => {
+  app.use("/api", (_request, response, next) => {
     response.setHeader("Cache-Control", "no-store");
     next();
+  });
+
+  app.get("/api/health", (_request, response) => {
+    response.json({ status: "ok" });
   });
 
   app.post("/api/code-requests", creationLimiter, (request, response) => {

@@ -128,6 +128,21 @@ configure mailbox credentials in that Vercel project and do not treat it as the
 production API: the in-memory request Map and five-minute IMAP watcher require the
 single long-running Node/Docker process described above.
 
+### Render
+
+The included `render.yaml` creates one Node web service and prompts for
+`MAILBOXES_JSON` during the initial Blueprint setup. Enter the value only in Render's
+secret environment-variable form; never add it to this repository.
+
+1. In Render, create a new Blueprint from this repository.
+2. Enter the production `MAILBOXES_JSON` value when prompted.
+3. Keep exactly one service instance.
+4. Verify `GET /api/health` returns `{"status":"ok"}` over HTTPS.
+
+The Free instance type is suitable only for testing because Render can suspend it
+after a period without inbound traffic and can restart it at any time. Use a
+non-sleeping single instance for reliable production code retrieval.
+
 ## Security limitations
 
 - This is an authorization aid, not an identity provider.
