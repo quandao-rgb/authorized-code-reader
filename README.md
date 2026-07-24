@@ -120,6 +120,14 @@ access to IMAP. Static-only and edge-worker hosting is not suitable for this bui
 the required Express process and ImapFlow connection need a Node runtime with
 long-lived TLS sockets.
 
+### Vercel
+
+The included `vercel.json` publishes `dist/client`, so a Vercel deployment can serve
+the frontend without returning `NOT_FOUND`. This is a frontend preview only. Do not
+configure mailbox credentials in that Vercel project and do not treat it as the
+production API: the in-memory request Map and five-minute IMAP watcher require the
+single long-running Node/Docker process described above.
+
 ## Security limitations
 
 - This is an authorization aid, not an identity provider.
