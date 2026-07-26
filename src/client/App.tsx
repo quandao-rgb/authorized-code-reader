@@ -12,17 +12,25 @@ import {
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 
 type ViewState =
-  "idle" | "connecting" | "waiting" | "found" | "timeout" | "not_found" | "error";
+  | "idle"
+  | "connecting"
+  | "queued"
+  | "waiting"
+  | "cancelling"
+  | "found"
+  | "timeout"
+  | "not_found"
+  | "error";
 
 interface CreationResponse {
-  status: "waiting" | "not_found" | "busy" | "error";
+  status: "queued" | "waiting" | "not_found" | "busy" | "error";
   requestId?: string;
   expiresAt?: string;
   message?: string;
 }
 
 interface StatusResponse {
-  status: "waiting" | "found" | "timeout" | "error";
+  status: "queued" | "waiting" | "found" | "timeout" | "error";
   remainingSeconds?: number;
   code?: string;
   message?: string;
@@ -50,7 +58,7 @@ export function App() {
   const pollBusy = useRef(false);
 
   useEffect(() => {
-    if (view !== "waiting" || !requestId || !expiresAt) {
+    if ((view !== "queued" && view !== "waiting") || !requestId || !expiresAt) {
       return;
     }
 
@@ -87,6 +95,12 @@ export function App() {
           setCode(data.code);
           setView("found");
           setMessage("Đã tìm thấy mã");
+        } else if (data.status === "queued") {
+          setView("queued");
+          setMessage("Đang chờ phiên trước kết thúc...");
+        } else if (data.status === "waiting") {
+          setView("waiting");
+          setMessage("Đang chờ mã đăng nhập...");
         } else if (data.status === "timeout") {
           setView("timeout");
           setMessage(data.message ?? "Không tìm thấy mã. Hãy thử lại.");
@@ -122,7 +136,13 @@ export function App() {
 
   const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
-    if (!email.trim() || view === "connecting" || view === "waiting") {
+    if (
+      !email.trim() ||
+      view === "connecting" ||
+      view === "queued" ||
+      view === "waiting" ||
+      view === "cancelling"
+    ) {
       return;
     }
 
@@ -148,7 +168,11 @@ export function App() {
         return;
       }
 
-      if (!response.ok || data.status !== "waiting" || !data.requestId) {
+      if (
+        !response.ok ||
+        (data.status !== "queued" && data.status !== "waiting") ||
+        !data.requestId
+      ) {
         setView("error");
         setMessage(data.message ?? "Không thể kiểm tra hộp thư. Hãy thử lại sau.");
         return;
@@ -160,8 +184,12 @@ export function App() {
       setRequestId(data.requestId);
       setExpiresAt(expiry);
       setRemainingSeconds(Math.max(0, Math.ceil((expiry - Date.now()) / 1_000)));
-      setView("waiting");
-      setMessage("Đang chờ mã đăng nhập...");
+      setView(data.status);
+      setMessage(
+        data.status === "queued"
+          ? "Đang chờ phiên trước kết thúc..."
+          : "Đang chờ mã đăng nhập...",
+      );
     } catch {
       setView("error");
       setMessage("Không thể kiểm tra hộp thư. Hãy thử lại sau.");
@@ -170,21 +198,31 @@ export function App() {
 
   const cancel = async (): Promise<void> => {
     const currentRequestId = requestId;
-    setRequestId(null);
-    setExpiresAt(null);
-    setView("idle");
-    setMessage("");
-    setRemainingSeconds(FIVE_MINUTES_SECONDS);
+    if (!currentRequestId || (view !== "waiting" && view !== "queued")) {
+      return;
+    }
 
-    if (currentRequestId) {
-      try {
-        await fetch(`/api/code-requests/${currentRequestId}`, {
-          method: "DELETE",
-          cache: "no-store",
-        });
-      } catch {
-        // The local interface is reset even if the server is no longer reachable.
+    const previousView = view;
+    setView("cancelling");
+    setMessage("Đang hủy phiên chờ mã...");
+
+    try {
+      const response = await fetch(`/api/code-requests/${currentRequestId}`, {
+        method: "DELETE",
+        cache: "no-store",
+      });
+      if (!response.ok && response.status !== 404) {
+        throw new Error("Cancellation was not confirmed.");
       }
+
+      setRequestId(null);
+      setExpiresAt(null);
+      setView("idle");
+      setMessage("");
+      setRemainingSeconds(FIVE_MINUTES_SECONDS);
+    } catch {
+      setView(previousView);
+      setMessage("Không thể hủy phiên. Vui lòng thử lại.");
     }
   };
 
@@ -208,7 +246,11 @@ export function App() {
     }
   };
 
-  const isBusy = view === "connecting" || view === "waiting";
+  const isBusy =
+    view === "connecting" ||
+    view === "queued" ||
+    view === "waiting" ||
+    view === "cancelling";
   const showResult = ["found", "timeout", "not_found", "error"].includes(view);
 
   return (
@@ -271,14 +313,26 @@ export function App() {
               />
             </div>
 
-            {view === "waiting" && (
+            {(view === "queued" || view === "waiting" || view === "cancelling") && (
               <div className="waiting-panel" aria-hidden="true">
                 <div className="waiting-panel__pulse">
                   <Mail size={24} />
                 </div>
                 <div>
-                  <span>Đang theo dõi hộp thư</span>
-                  <small>Chỉ kiểm tra thư mới từ người gửi được cho phép</small>
+                  <span>
+                    {view === "queued"
+                      ? "Đang chờ bàn giao hộp thư"
+                      : view === "cancelling"
+                        ? "Đang đóng phiên chờ mã"
+                        : "Đang theo dõi hộp thư"}
+                  </span>
+                  <small>
+                    {view === "queued"
+                      ? "Phiên sẽ tự bắt đầu ngay khi yêu cầu trước kết thúc"
+                      : view === "cancelling"
+                        ? "Vui lòng chờ hệ thống xác nhận đã hủy"
+                        : "Chỉ kiểm tra thư mới từ người gửi được cho phép"}
+                  </small>
                 </div>
               </div>
             )}
@@ -289,19 +343,23 @@ export function App() {
                 type="submit"
                 disabled={isBusy || !email.trim()}
               >
-                {view === "connecting" || view === "waiting" ? (
+                {isBusy ? (
                   <LoaderCircle className="spin" size={20} aria-hidden="true" />
                 ) : (
                   <KeyRound size={20} aria-hidden="true" />
                 )}
                 {view === "connecting"
                   ? "Đang kết nối hộp thư..."
-                  : view === "waiting"
-                    ? "Đang chờ mã đăng nhập..."
-                    : "Nhận mã"}
+                  : view === "queued"
+                    ? "Đang chờ phiên trước kết thúc..."
+                    : view === "waiting"
+                      ? "Đang chờ mã đăng nhập..."
+                      : view === "cancelling"
+                        ? "Đang hủy phiên..."
+                        : "Nhận mã"}
               </button>
 
-              {view === "waiting" && (
+              {(view === "queued" || view === "waiting") && (
                 <button className="secondary-button" type="button" onClick={cancel}>
                   <X size={18} aria-hidden="true" />
                   Hủy
@@ -309,7 +367,7 @@ export function App() {
               )}
             </div>
 
-            {view === "waiting" && (
+            {(view === "queued" || view === "waiting") && (
               <div className="countdown" aria-label="Thời gian còn lại">
                 <Clock3 size={17} aria-hidden="true" />
                 <span>Thời gian còn lại</span>

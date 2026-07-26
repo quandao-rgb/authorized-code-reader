@@ -94,9 +94,10 @@ export function createApp(options: CreateAppOptions): express.Express {
       case "global_limit":
         response.status(503).json(GENERIC_ERROR);
         return;
+      case "queued":
       case "waiting":
         response.status(202).json({
-          status: "waiting",
+          status: result.status,
           requestId: result.requestId,
           expiresAt: result.expiresAt.toISOString(),
         });
@@ -111,6 +112,15 @@ export function createApp(options: CreateAppOptions): express.Express {
     }
 
     switch (job.status) {
+      case "queued":
+        response.json({
+          status: "queued",
+          remainingSeconds: Math.max(
+            0,
+            Math.ceil((job.expiresAt.getTime() - Date.now()) / 1_000),
+          ),
+        });
+        return;
       case "waiting":
         response.json({
           status: "waiting",
@@ -129,8 +139,8 @@ export function createApp(options: CreateAppOptions): express.Express {
     }
   });
 
-  app.delete("/api/code-requests/:requestId", (request, response) => {
-    if (!options.manager.cancel(request.params.requestId)) {
+  app.delete("/api/code-requests/:requestId", async (request, response) => {
+    if (!(await options.manager.cancel(request.params.requestId))) {
       response.status(404).json(GENERIC_ERROR);
       return;
     }

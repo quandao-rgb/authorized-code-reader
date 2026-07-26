@@ -22,6 +22,10 @@ The browser creates a job, then polls its status every two seconds. The server r
 the request time and the mailbox's next UID, inspects only newer messages, and closes
 the IMAP connection on success, timeout, cancellation, error, or shutdown.
 
+Only one IMAP watcher runs for each mailbox. Cancellation is confirmed after that
+watcher closes. During this brief handoff, one new request can wait in a `queued`
+state and starts automatically as soon as the previous watcher has stopped.
+
 ## Requirements
 
 - Node.js 20.19 or newer
