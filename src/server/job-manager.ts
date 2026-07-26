@@ -5,6 +5,7 @@ import { WatcherTimeoutError } from "./mail-watcher.js";
 
 export const MESSAGES = {
   notFound: "Không tìm thấy email.",
+  busy: "Đang có người chờ mã. Vui lòng thử lại sau.",
   timeout: "Không tìm thấy mã. Hãy thử lại.",
   error: "Không thể kiểm tra hộp thư. Hãy thử lại sau.",
 } as const;
