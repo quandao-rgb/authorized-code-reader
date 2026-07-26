@@ -87,7 +87,7 @@ describe("code request API", () => {
     ).toBe(400);
   });
 
-  it("returns a generic error for a duplicate active request", async () => {
+  it("returns a clear busy response for a duplicate active request", async () => {
     const { app } = testApp();
     await request(app).post("/api/code-requests").send({ email: "mailbox@example.com" });
     const duplicate = await request(app)
@@ -96,8 +96,8 @@ describe("code request API", () => {
 
     expect(duplicate.status).toBe(409);
     expect(duplicate.body).toEqual({
-      status: "error",
-      message: "Không thể kiểm tra hộp thư. Hãy thử lại sau.",
+      status: "busy",
+      message: "Đang có người chờ mã. Vui lòng thử lại sau.",
     });
   });
 });

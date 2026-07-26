@@ -15,7 +15,7 @@ type ViewState =
   "idle" | "connecting" | "waiting" | "found" | "timeout" | "not_found" | "error";
 
 interface CreationResponse {
-  status: "waiting" | "not_found" | "error";
+  status: "waiting" | "not_found" | "busy" | "error";
   requestId?: string;
   expiresAt?: string;
   message?: string;

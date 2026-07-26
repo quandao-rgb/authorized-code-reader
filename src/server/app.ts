@@ -86,7 +86,10 @@ export function createApp(options: CreateAppOptions): express.Express {
         });
         return;
       case "duplicate":
-        response.status(409).json(GENERIC_ERROR);
+        response.status(409).json({
+          status: "busy",
+          message: MESSAGES.busy,
+        });
         return;
       case "global_limit":
         response.status(503).json(GENERIC_ERROR);
