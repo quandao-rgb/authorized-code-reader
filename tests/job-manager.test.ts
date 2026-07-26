@@ -80,16 +80,68 @@ describe("code request manager", () => {
     });
   });
 
-  it("cancels a request and aborts its watcher", () => {
+  it("cancels a request and waits for its watcher to stop", async () => {
     const pending = pendingWatcher();
     const manager = new CodeRequestManager(appConfig(), pending.watcher, {
       idFactory: () => "cancel-me",
     });
 
     manager.create("mailbox@example.com");
-    expect(manager.cancel("cancel-me")).toBe(true);
+    await expect(manager.cancel("cancel-me")).resolves.toBe(true);
     expect(pending.signals[0]?.aborted).toBe(true);
     expect(manager.get("cancel-me")).toBeUndefined();
+  });
+
+  it("queues one handoff request until the cancelled watcher has stopped", async () => {
+    let releaseClose: (() => void) | undefined;
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    const signals: AbortSignal[] = [];
+    const watcher: CodeWatcher = {
+      watch: (_mailbox, _date, signal) => {
+        signals.push(signal);
+        return new Promise<string>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              const finishClose = async (): Promise<void> => {
+                if (signals.length === 1) {
+                  await closeGate;
+                }
+                reject(new DOMException("Aborted", "AbortError"));
+              };
+              void finishClose();
+            },
+            { once: true },
+          );
+        });
+      },
+    };
+    const requestIds = ["first", "handoff"];
+    const manager = new CodeRequestManager(appConfig(), watcher, {
+      idFactory: () => requestIds.shift() ?? "unexpected",
+    });
+
+    expect(manager.create("mailbox@example.com").status).toBe("waiting");
+    const cancellation = manager.cancel("first");
+    expect(signals[0]?.aborted).toBe(true);
+
+    expect(manager.create("mailbox@example.com")).toMatchObject({
+      status: "queued",
+      requestId: "handoff",
+    });
+    expect(manager.get("handoff")?.status).toBe("queued");
+    expect(manager.create("mailbox@example.com")).toEqual({ status: "duplicate" });
+    expect(signals).toHaveLength(1);
+
+    releaseClose?.();
+    await cancellation;
+    await flushPromises();
+
+    expect(manager.get("handoff")?.status).toBe("waiting");
+    expect(signals).toHaveLength(2);
+    await manager.cancel("handoff");
   });
 
   it("records successful results and removes the code after 60 seconds", async () => {

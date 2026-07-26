@@ -100,4 +100,66 @@ describe("code request API", () => {
       message: "Đang có người chờ mã. Vui lòng thử lại sau.",
     });
   });
+
+  it("queues a handoff request while cancellation closes the previous watcher", async () => {
+    let releaseClose: (() => void) | undefined;
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    let cancellationStarted: (() => void) | undefined;
+    const cancellationSignal = new Promise<void>((resolve) => {
+      cancellationStarted = resolve;
+    });
+    let watchCount = 0;
+    const handoffWatcher: CodeWatcher = {
+      watch: (_mailbox, _date, signal) => {
+        watchCount += 1;
+        return new Promise<string>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              const finishClose = async (): Promise<void> => {
+                if (watchCount === 1) {
+                  cancellationStarted?.();
+                  await closeGate;
+                }
+                reject(new DOMException("Aborted", "AbortError"));
+              };
+              void finishClose();
+            },
+            { once: true },
+          );
+        });
+      },
+    };
+    const requestIds = ["first", "handoff"];
+    const manager = new CodeRequestManager(appConfig(), handoffWatcher, {
+      idFactory: () => requestIds.shift() ?? "unexpected",
+    });
+    const app = createApp({ manager, disableIpRateLimit: true });
+
+    const first = await request(app)
+      .post("/api/code-requests")
+      .send({ email: "mailbox@example.com" });
+    const cancellation = request(app)
+      .delete(`/api/code-requests/${first.body.requestId as string}`)
+      .then((response) => response);
+    await cancellationSignal;
+
+    const handoff = await request(app)
+      .post("/api/code-requests")
+      .send({ email: "mailbox@example.com" });
+    expect(handoff.status).toBe(202);
+    expect(handoff.body).toMatchObject({
+      status: "queued",
+      requestId: "handoff",
+    });
+
+    releaseClose?.();
+    expect((await cancellation).status).toBe(204);
+    expect((await request(app).get("/api/code-requests/handoff")).body.status).toBe(
+      "waiting",
+    );
+    await request(app).delete("/api/code-requests/handoff");
+  });
 });
