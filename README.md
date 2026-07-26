@@ -26,6 +26,12 @@ Only one IMAP watcher runs for each mailbox. Cancellation is confirmed after tha
 watcher closes. During this brief handoff, one new request can wait in a `queued`
 state and starts automatically as soon as the previous watcher has stopped.
 
+Only successfully created requests consume the per-mailbox abuse limit. A confirmed
+cancellation releases that request's reservation, so the mailbox can be requested
+again immediately. Non-cancelled requests remain limited to six starts per rolling
+ten-minute window, and the reverse-proxy-aware IP limit allows thirty successful
+starts per rolling ten-minute window.
+
 ## Requirements
 
 - Node.js 20.19 or newer
@@ -112,6 +118,7 @@ docker compose up --build -d
 
 Place the container behind an HTTPS reverse proxy and restrict who can reach it. The
 application needs outbound TCP access to each configured IMAP host and port.
+The Express application trusts exactly one proxy hop for client-IP rate limiting.
 
 This no-database edition must run as **one server instance**. Multiple replicas would
 have separate job and rate-limit Maps. Active requests are lost whenever the server

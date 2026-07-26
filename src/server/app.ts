@@ -15,6 +15,10 @@ const requestBodySchema = z
   .strict();
 
 const GENERIC_ERROR = { status: "error", message: MESSAGES.error };
+const RATE_LIMIT_ERROR = {
+  status: "rate_limited",
+  message: "Bạn thao tác quá nhanh. Vui lòng thử lại sau.",
+};
 
 export interface CreateAppOptions {
   manager: CodeRequestManager;
@@ -28,6 +32,7 @@ export function createApp(options: CreateAppOptions): express.Express {
   const emailLimiter = options.emailLimiter ?? new EmailAttemptLimiter();
 
   app.disable("x-powered-by");
+  app.set("trust proxy", 1);
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -47,11 +52,12 @@ export function createApp(options: CreateAppOptions): express.Express {
     ? (_request: Request, _response: Response, next: NextFunction): void => next()
     : rateLimit({
         windowMs: 10 * 60 * 1_000,
-        limit: 5,
+        limit: 30,
         standardHeaders: "draft-8",
         legacyHeaders: false,
+        skipFailedRequests: true,
         handler: (_request, response) => {
-          response.status(429).json(GENERIC_ERROR);
+          response.status(429).json(RATE_LIMIT_ERROR);
         },
       });
 
@@ -72,8 +78,8 @@ export function createApp(options: CreateAppOptions): express.Express {
     }
 
     const email = normalizeEmail(parsed.data.email);
-    if (!emailLimiter.consume(email)) {
-      response.status(429).json(GENERIC_ERROR);
+    if (!emailLimiter.canConsume(email)) {
+      response.status(429).json(RATE_LIMIT_ERROR);
       return;
     }
 
@@ -96,6 +102,7 @@ export function createApp(options: CreateAppOptions): express.Express {
         return;
       case "queued":
       case "waiting":
+        emailLimiter.record(email, result.requestId);
         response.status(202).json({
           status: result.status,
           requestId: result.requestId,
@@ -140,9 +147,14 @@ export function createApp(options: CreateAppOptions): express.Express {
   });
 
   app.delete("/api/code-requests/:requestId", async (request, response) => {
+    const job = options.manager.get(request.params.requestId);
+    const releasesAttempt = job?.status === "queued" || job?.status === "waiting";
     if (!(await options.manager.cancel(request.params.requestId))) {
       response.status(404).json(GENERIC_ERROR);
       return;
+    }
+    if (releasesAttempt) {
+      emailLimiter.release(request.params.requestId);
     }
     response.status(204).end();
   });
