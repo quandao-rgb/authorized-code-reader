@@ -1,9 +1,10 @@
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/server/app.js";
+import { EmailAttemptLimiter } from "../src/server/email-attempt-limiter.js";
 import { CodeRequestManager } from "../src/server/job-manager.js";
 import type { CodeWatcher } from "../src/server/types.js";
-import { appConfig } from "./fixtures.js";
+import { appConfig, mailbox } from "./fixtures.js";
 
 const watcher: CodeWatcher = {
   watch: (_mailbox, _date, signal) =>
@@ -99,6 +100,101 @@ describe("code request API", () => {
       status: "busy",
       message: "Đang có người chờ mã. Vui lòng thử lại sau.",
     });
+  });
+
+  it("does not consume an email attempt when the global watcher limit rejects it", async () => {
+    const mailboxes = Array.from({ length: 6 }, (_, index) =>
+      mailbox({
+        email: `mailbox-${index}@example.com`,
+        imap: {
+          ...mailbox().imap,
+          username: `mailbox-${index}@example.com`,
+        },
+      }),
+    );
+    const requestIds = [
+      "active-0",
+      "active-1",
+      "active-2",
+      "active-3",
+      "active-4",
+      "rejected",
+      "accepted",
+    ];
+    const manager = new CodeRequestManager(appConfig(mailboxes), watcher, {
+      idFactory: () => requestIds.shift() ?? "unexpected",
+    });
+    const app = createApp({
+      manager,
+      emailLimiter: new EmailAttemptLimiter(1),
+      disableIpRateLimit: true,
+    });
+
+    for (let index = 0; index < 5; index += 1) {
+      expect(manager.create(`mailbox-${index}@example.com`).status).toBe("waiting");
+    }
+
+    await request(app)
+      .post("/api/code-requests")
+      .send({ email: "mailbox-5@example.com" })
+      .expect(503);
+
+    await manager.cancel("active-0");
+    await request(app)
+      .post("/api/code-requests")
+      .send({ email: "mailbox-5@example.com" })
+      .expect(202);
+    await request(app).delete("/api/code-requests/accepted").expect(204);
+    manager.shutdown();
+  });
+
+  it("allows the same mailbox immediately after confirmed cancellation", async () => {
+    const requestIds = ["first", "second"];
+    const manager = new CodeRequestManager(appConfig(), watcher, {
+      idFactory: () => requestIds.shift() ?? "unexpected",
+    });
+    const app = createApp({
+      manager,
+      emailLimiter: new EmailAttemptLimiter(1),
+      disableIpRateLimit: true,
+    });
+
+    await request(app)
+      .post("/api/code-requests")
+      .send({ email: "mailbox@example.com" })
+      .expect(202);
+
+    const limited = await request(app)
+      .post("/api/code-requests")
+      .send({ email: "mailbox@example.com" });
+    expect(limited.status).toBe(429);
+    expect(limited.body).toEqual({
+      status: "rate_limited",
+      message: "Bạn thao tác quá nhanh. Vui lòng thử lại sau.",
+    });
+
+    await request(app).delete("/api/code-requests/first").expect(204);
+
+    const second = await request(app)
+      .post("/api/code-requests")
+      .send({ email: "mailbox@example.com" });
+    expect(second.status).toBe(202);
+    expect(second.body.requestId).toBe("second");
+    await request(app).delete("/api/code-requests/second").expect(204);
+  });
+
+  it("trusts Render's single proxy hop for per-client IP limiting", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { app } = testApp();
+
+    await request(app)
+      .post("/api/code-requests")
+      .set("X-Forwarded-For", "203.0.113.10")
+      .send({ email: "unknown@example.com" })
+      .expect(404);
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it("queues a handoff request while cancellation closes the previous watcher", async () => {

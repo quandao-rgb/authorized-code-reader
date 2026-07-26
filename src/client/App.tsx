@@ -23,7 +23,7 @@ type ViewState =
   | "error";
 
 interface CreationResponse {
-  status: "queued" | "waiting" | "not_found" | "busy" | "error";
+  status: "queued" | "waiting" | "not_found" | "busy" | "rate_limited" | "error";
   requestId?: string;
   expiresAt?: string;
   message?: string;
